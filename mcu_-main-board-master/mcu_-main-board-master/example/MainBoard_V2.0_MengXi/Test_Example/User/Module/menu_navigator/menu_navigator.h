@@ -1,0 +1,235 @@
+//
+// Created by Taseny on 25-7-21.
+//
+
+#ifndef MENU_NAVIGATOR_H
+#define MENU_NAVIGATOR_H
+
+
+
+/**
+ * Display API Define Zone
+ */
+#define MAX_DISPLAY_CHAR 16U //
+#define MAX_DISPLAY_ITEM 4U  //
+
+/**
+ * Display API Define Zone
+ */
+
+#ifdef __cplusplus
+
+#include <memory>
+#include <cstring>
+
+namespace Menu
+{
+    enum class menuItemType
+    {
+        NORMAL,
+        CHANGEABLE,
+        TOGGLE,
+        EXHIBITION
+    };
+
+    enum class keyValue
+    {
+        UP,
+        DOWN,
+        LEFT,
+        RIGHT,
+        NONE
+    };
+
+    class Changeable
+    {
+    public:
+        virtual ~Changeable() = default;
+        virtual void increment() = 0;
+        virtual void decrement() = 0;
+        virtual void getDisplayValue(char* value_str, size_t size) const = 0;
+    };
+
+    template <typename T>
+    class ChangeableItem : public Changeable
+    {
+    public:
+        T& ref_;
+        T min_;
+        T max_;
+        T step_;
+        void (*onChange_)(T);
+
+        ChangeableItem(T& ref, T min, T max, T step, void (*callback)(T) = nullptr)
+            : ref_(ref), min_(min), max_(max), step_(step), onChange_(callback)
+        {
+        }
+
+        void increment() override;
+
+        void decrement() override;
+
+        void getDisplayValue(char* value_str, size_t size) const override;
+    };
+
+    class menuItem
+    {
+    public:
+        using ptrChangeableItem = std::unique_ptr<Changeable>;
+
+        bool is_locked = true;
+        const char* item_name_;
+        menuItem* parent_item_;
+        menuItem** children_item_;
+        uint8_t children_count_;
+        uint8_t saved_selected_index_;
+        uint8_t saved_first_visible_item_;
+        menuItemType type_;
+
+        ptrChangeableItem changeable_item_;
+
+        void (*app_func_)(void**);
+        void (*periodic_callback_)();
+        void (*periodic_callback_with_nav_)(class Navigator*);
+        void (*periodic_callback_with_page_)(class Navigator*, uint8_t current_page, uint8_t total_pages);
+        void** app_args_;
+
+        struct ToggleData
+        {
+            bool state;
+            bool* ref;
+            void (*onToggle)(bool);
+
+            ToggleData()
+            {
+                state = false, ref = nullptr;
+                onToggle = nullptr;
+            }
+        } toggle_data_;
+
+        // Exhibition item pagination data
+        struct ExhibitionData
+        {
+            uint8_t current_page = 0;
+            uint8_t total_pages = 1;
+            uint8_t lines_per_page = MAX_DISPLAY_ITEM - 1; // Reserve first line for title
+        } exhibition_data_;
+
+        menuItem(const char* item_name, menuItem** children_items, uint8_t children_count, menuItemType type,
+                 void (*app_func)(void**) = nullptr, void** app_args = nullptr);
+
+        static menuItem* createNormalItem(const char* name, menuItem** children_items, uint8_t count);
+
+        template <typename T>
+        static menuItem* createChangeableItem(const char* name, T& ref, T min, T max, T step,
+                                              void (*onChange)(T));
+
+        static menuItem* createToggle(const char* name, bool* ref, void (onToggle)(bool));
+
+        static menuItem* createApp(const char* name, void** app_args, void (*app_func)(void**));
+
+        static menuItem* createExhibitionItem(const char* name, void (*callback)());
+
+        static menuItem* createExhibitionItemWithNav(const char* name, void (*callback)(class Navigator*));
+
+        static menuItem* createExhibitionItemWithPage(const char* name, uint8_t total_pages, 
+                                                       void (*callback)(class Navigator*, uint8_t current_page, uint8_t total_pages));
+
+        void toggle();
+
+        void increment() const;
+
+        void decrement() const;
+
+        void getValueStr(char* value_str, size_t size) const;
+
+        // Exhibition pagination methods
+        void setTotalPages(uint8_t total_pages);
+        uint8_t getCurrentPage() const;
+        uint8_t getTotalPages() const;
+        void nextPage();
+        void prevPage();
+        void resetToFirstPage(); // Reset current page to 0
+    };
+
+    class Navigator
+    {
+    public:
+        explicit Navigator(menuItem* main_item)
+        {
+            current_menu_ = main_item;
+            in_app_mode_ = false;
+            selected_index_ = 0;
+            first_visible_item_ = 0;
+            app_saved_selected_index_ = 0;
+            saved_first_visible_item_before_exhibition_ = 0;
+        }
+
+        void handleInput(const keyValue& key_value);
+
+        void refreshDisplay();
+
+        void setAppMode(const bool is_app_mode) { in_app_mode_ = is_app_mode; }
+
+        bool getAppMode() const { return in_app_mode_; }
+
+        char* getDisplayBuffer()
+        {
+            static char error_str[] = "No Menu Item";
+
+            if (current_menu_ == nullptr) return error_str;
+
+            if (current_menu_->children_item_ == nullptr) return error_str;
+
+            return display_buffer_;
+        }
+
+        void writeDisplayBuffer(const char* buffer, const size_t size, const uint8_t first_line)
+        {
+            // Only write to specified lines, don't clear the entire buffer
+            memcpy(&display_buffer_[MAX_DISPLAY_CHAR * first_line], buffer, size);
+        }
+
+        void writeDisplayLine(const char* buffer, const uint8_t line)
+        {
+            // Clear and write to a specific line
+            memset(&display_buffer_[MAX_DISPLAY_CHAR * line], '\0', MAX_DISPLAY_CHAR);
+            strncpy(&display_buffer_[MAX_DISPLAY_CHAR * line], buffer, MAX_DISPLAY_CHAR - 1);
+        }
+
+        void forceRefreshDisplay()
+        {
+            // Force clear and refresh display
+            memset(display_buffer_, '\0', MAX_DISPLAY_CHAR * MAX_DISPLAY_ITEM);
+            refreshDisplay();
+        }
+
+        // Exhibition pagination methods
+        bool isExhibitionPageable() const;
+        void exhibitionNextPage();
+        void exhibitionPrevPage();
+        void exhibitionResetToFirstPage();
+        uint8_t getExhibitionCurrentPage() const;
+        uint8_t getExhibitionTotalPages() const;
+
+        // Get current page information
+        const char* getCurrentPageName() const;
+        const char* getCurrentSelectedItemName() const;
+        bool isInExhibitionMode() const;
+
+    private:
+        char display_buffer_[MAX_DISPLAY_CHAR * MAX_DISPLAY_ITEM] = {0};
+
+        menuItem* current_menu_;
+        bool in_app_mode_;
+        uint8_t selected_index_;
+        uint8_t first_visible_item_;
+
+        uint8_t app_saved_selected_index_;
+        uint8_t saved_first_visible_item_before_exhibition_;
+    };
+}
+
+#endif
+
+#endif //MENU_NAVIGATOR_H
