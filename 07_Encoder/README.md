@@ -1,6 +1,8 @@
-# STM32F407 电机控制系统
+# PrecisionDrive
 
-基于STM32F407VET6的电机控制系统，用于电子设计竞赛。
+> 精准电机控制系统 | Precision Motor Control System
+
+基于 STM32F407VET6 的高精度电机控制系统，支持多种运动模式和精确圈数控制。
 
 ## 功能概述
 
